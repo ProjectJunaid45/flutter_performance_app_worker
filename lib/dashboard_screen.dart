@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'sing_in.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -12,37 +13,54 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final SupabaseClient _supabase = Supabase.instance.client;
 
-  int _currentTabIndex = 0; // 0: Floor Jobs, 1: 100-Mark Scorecard, 2: History, 3: Profile
+  int _currentTabIndex = 0; // 0: Home, 1: 100-Mark Scorecard, 2: History, 3: Profile
   bool _isLoading = true;
 
   String _currentWorker = "MALIK10";
   String _workerFullName = "malik";
   String _workerPhone = "-";
 
-  // Real 100-Mark Factory Evaluation Metrics
-  int _score100 = 88;
-  double _myRating = 4.4;
-  String _ratingTag = "FACTORY STANDARD";
-  String _ratingComment = "Dressing and wiring torque checked. Keep ferrule spacing uniform.";
+  // Scorecard Navigator States (Month & Year)
+  int _scoreSelYear = 2026;
+  int _scoreSelMonth = 10;
+  bool _isScoreYearlyMode = false;
 
-  // 6 Quality Parameters Breakdown
-  int _wiringMarks = 23;     // Max 25
-  int _dressingMarks = 18;   // Max 20
-  int _ferruleMarks = 13;    // Max 15
-  int _plcSignalMarks = 13;  // Max 15
-  int _mountingMarks = 13;   // Max 15
-  int _safetyQcMarks = 8;    // Max 10
+  // Real 100-Mark Factory Evaluation Metrics
+  int _score100 = 0;
+  double _myRating = 0.0;
+  String _ratingTag = "NOT EVALUATED";
+  String _ratingComment = "Awaiting supervisor quality review.";
+
+  // 7 Quality & Attendance Parameters Breakdown
+  int _wiringMarks = 0;
+  int _dressingMarks = 0;
+  int _attendanceMarks = 0;
+  int _ferruleMarks = 0;
+  int _plcSignalMarks = 0;
+  int _mountingMarks = 0;
+  int _safetyQcMarks = 0;
 
   List<Map<String, dynamic>> _myAllJobs = [];
+  List<Map<String, dynamic>> _myAuditHistoryList = [];
   String _searchQuery = '';
   String _activeFilter = 'ALL';
   final TextEditingController _searchCtrl = TextEditingController();
   final TextEditingController _historySearchCtrl = TextEditingController();
   String _historySearchQuery = '';
 
+  // History Tab Filter States (Month & Year)
+  int _historySelYear = 2026;
+  int _historySelMonth = 10;
+  bool _isHistoryYearlyMode = false;
+
   @override
   void initState() {
     super.initState();
+    final now = DateTime.now();
+    _scoreSelYear = now.year;
+    _scoreSelMonth = now.month;
+    _historySelYear = now.year;
+    _historySelMonth = now.month;
     _loadWorkerSession();
   }
 
@@ -51,6 +69,137 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _searchCtrl.dispose();
     _historySearchCtrl.dispose();
     super.dispose();
+  }
+
+  static String _monthName(int month) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return (month >= 1 && month <= 12) ? months[month - 1] : 'Jan';
+  }
+
+  static String _calculateTimeAgo(String dateString) {
+    try {
+      final now = DateTime.now();
+      DateTime? parsedDate;
+
+      final parts = dateString.trim().split(RegExp(r'\s+'));
+      if (parts.length >= 3) {
+        final d = int.tryParse(parts[0]);
+        final mName = parts[1].toLowerCase();
+        final y = int.tryParse(parts[2]);
+
+        const mList = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+        final m = mList.indexOf(mName) + 1;
+
+        if (d != null && m > 0 && y != null) {
+          parsedDate = DateTime(y, m, d);
+        }
+      }
+
+      parsedDate ??= DateTime.tryParse(dateString);
+
+      if (parsedDate == null) {
+        return "Delivered Log";
+      }
+
+      int monthDiff = (now.year - parsedDate.year) * 12 + (now.month - parsedDate.month);
+      if (monthDiff <= 0) {
+        int dayDiff = now.difference(parsedDate).inDays;
+        if (dayDiff <= 0) return "Completed Today";
+        if (dayDiff == 1) return "Completed Yesterday";
+        return "Completed this month ($dayDiff days ago)";
+      } else if (monthDiff == 1) {
+        return "Completed 1 month ago";
+      } else {
+        return "Completed $monthDiff months ago";
+      }
+    } catch (_) {
+      return "Delivered Log";
+    }
+  }
+
+  static Map<String, int> _extractBreakdownMap(String specs) {
+    int w = 0, d = 0, a = 0, f = 0, p = 0, m = 0, s = 0;
+    final wMatch = RegExp(r'W:(\d+)').firstMatch(specs);
+    final dMatch = RegExp(r'D:(\d+)').firstMatch(specs);
+    final aMatch = RegExp(r'A:(\d+)').firstMatch(specs);
+    final fMatch = RegExp(r'F:(\d+)').firstMatch(specs);
+    final pMatch = RegExp(r'P:(\d+)').firstMatch(specs);
+    final mMatch = RegExp(r'M:(\d+)').firstMatch(specs);
+    final sMatch = RegExp(r'S:(\d+)').firstMatch(specs);
+
+    if (wMatch != null) w = int.tryParse(wMatch.group(1)!) ?? 0;
+    if (dMatch != null) d = int.tryParse(dMatch.group(1)!) ?? 0;
+    if (aMatch != null) a = int.tryParse(aMatch.group(1)!) ?? 0;
+    if (fMatch != null) f = int.tryParse(fMatch.group(1)!) ?? 0;
+    if (pMatch != null) p = int.tryParse(pMatch.group(1)!) ?? 0;
+    if (mMatch != null) m = int.tryParse(mMatch.group(1)!) ?? 0;
+    if (sMatch != null) s = int.tryParse(sMatch.group(1)!) ?? 0;
+
+    return {'Wiring': w, 'Dressing': d, 'Attendance': a, 'Ferrule': f, 'PLC': p, 'Mounting': m, 'Safety': s};
+  }
+
+  static Map<String, dynamic> _compareScoreWithPrevious(Map<String, dynamic> currentJob, List<Map<String, dynamic>> allCompleted) {
+    final curSpecs = (currentJob['specs_detail'] ?? '').toString();
+    final curBadge = RegExp(r'\[SCORE:\s*(\d+)').firstMatch(curSpecs);
+    final int curScore = curBadge != null ? (int.tryParse(curBadge.group(1)!) ?? 0) : 0;
+
+    final curMap = _extractBreakdownMap(curSpecs);
+
+    final curIndex = allCompleted.indexOf(currentJob);
+    Map<String, dynamic>? prevJob;
+    if (curIndex != -1 && curIndex + 1 < allCompleted.length) {
+      prevJob = allCompleted[curIndex + 1];
+    }
+
+    if (prevJob == null || curScore == 0) {
+      return {
+        'diff': 0,
+        'hasPrev': false,
+        'curScore': curScore,
+        'prevScore': 0,
+        'improved': <String>[],
+        'dropped': <String>[],
+        'summary': 'First audited record for comparison.',
+      };
+    }
+
+    final prevSpecs = (prevJob['specs_detail'] ?? '').toString();
+    final prevBadge = RegExp(r'\[SCORE:\s*(\d+)').firstMatch(prevSpecs);
+    final int prevScore = prevBadge != null ? (int.tryParse(prevBadge.group(1)!) ?? 0) : 0;
+    final prevMap = _extractBreakdownMap(prevSpecs);
+
+    final int diff = curScore - prevScore;
+    final List<String> improved = [];
+    final List<String> dropped = [];
+
+    curMap.forEach((key, curVal) {
+      final prevVal = prevMap[key] ?? 0;
+      final change = curVal - prevVal;
+      if (change > 0) {
+        improved.add("$key (+$change)");
+      } else if (change < 0) {
+        dropped.add("$key ($change)");
+      }
+    });
+
+    String summary;
+    if (diff > 0) {
+      summary = "Increased by +$diff pts mainly due to ${improved.isNotEmpty ? improved.join(', ') : 'overall quality'}";
+    } else if (diff < 0) {
+      summary = "Decreased by $diff pts due to ${dropped.isNotEmpty ? dropped.join(', ') : 'deductions'}";
+    } else {
+      summary = "Score maintained steadily at $curScore pts.";
+    }
+
+    return {
+      'diff': diff,
+      'hasPrev': true,
+      'curScore': curScore,
+      'prevScore': prevScore,
+      'improved': improved,
+      'dropped': dropped,
+      'summary': summary,
+    };
   }
 
   Future<void> _loadWorkerSession() async {
@@ -63,47 +212,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       _currentWorker = savedUser.trim().toUpperCase();
 
-      // Fetch Worker profile with 100-mark evaluation
+      // 1. Worker Profile Data
       final workerData = await _supabase
           .from('workers')
           .select()
-          .eq('username', _currentWorker)
+          .ilike('username', _currentWorker)
           .maybeSingle();
 
       if (workerData != null) {
         _workerFullName = (workerData['full_name'] ?? _currentWorker).toString();
         _workerPhone = (workerData['phone'] ?? '-').toString();
-        _myRating = (workerData['rating'] as num?)?.toDouble() ?? 4.4;
-        _score100 = (workerData['score_100'] as num?)?.toInt() ?? 88;
-        _ratingTag = (workerData['rating_tag'] ?? 'FACTORY STANDARD').toString();
-        _ratingComment = (workerData['rating_comment'] ?? 'Dressing and wiring torque verified.').toString();
+        _score100 = (workerData['score_100'] as num?)?.toInt() ?? 0;
 
-        // Parse breakdown tags if available
-        final rawBreakdown = (workerData['qc_breakdown'] ?? '').toString();
-        if (rawBreakdown.contains("SCORE:")) {
-          final wMatch = RegExp(r'W:(\d+)').firstMatch(rawBreakdown);
-          final dMatch = RegExp(r'D:(\d+)').firstMatch(rawBreakdown);
-          final fMatch = RegExp(r'F:(\d+)').firstMatch(rawBreakdown);
-          final pMatch = RegExp(r'P:(\d+)').firstMatch(rawBreakdown);
-          final mMatch = RegExp(r'M:(\d+)').firstMatch(rawBreakdown);
-          final sMatch = RegExp(r'S:(\d+)').firstMatch(rawBreakdown);
-
-          if (wMatch != null) _wiringMarks = int.tryParse(wMatch.group(1)!) ?? _wiringMarks;
-          if (dMatch != null) _dressingMarks = int.tryParse(dMatch.group(1)!) ?? _dressingMarks;
-          if (fMatch != null) _ferruleMarks = int.tryParse(fMatch.group(1)!) ?? _ferruleMarks;
-          if (pMatch != null) _plcSignalMarks = int.tryParse(pMatch.group(1)!) ?? _plcSignalMarks;
-          if (mMatch != null) _mountingMarks = int.tryParse(mMatch.group(1)!) ?? _mountingMarks;
-          if (sMatch != null) _safetyQcMarks = int.tryParse(sMatch.group(1)!) ?? _safetyQcMarks;
+        // Exact 5-star rating from DB or formula
+        final rawRating = (workerData['rating'] as num?)?.toDouble() ?? 0.0;
+        if (rawRating > 0.0) {
+          _myRating = rawRating;
+        } else if (_score100 > 0) {
+          _myRating = (_score100 / 20.0).clamp(1.0, 5.0);
+        } else {
+          _myRating = 0.0;
         }
+
+        _ratingTag = (workerData['rating_tag'] ?? 'NOT EVALUATED').toString();
+        _ratingComment = (workerData['rating_comment'] ?? 'Awaiting supervisor quality review.').toString();
+
+        final rawBreakdown = (workerData['qc_breakdown'] ?? '').toString();
+        final map = _extractBreakdownMap(rawBreakdown);
+        _wiringMarks = map['Wiring'] ?? 0;
+        _dressingMarks = map['Dressing'] ?? 0;
+        _attendanceMarks = map['Attendance'] ?? 0;
+        _ferruleMarks = map['Ferrule'] ?? 0;
+        _plcSignalMarks = map['PLC'] ?? 0;
+        _mountingMarks = map['Mounting'] ?? 0;
+        _safetyQcMarks = map['Safety'] ?? 0;
       }
 
-      // Fetch jobs assigned OR previously assigned to this builder
+      // 2. Worker Audits History Table Data
+      try {
+        final historyRes = await _supabase
+            .from('worker_audits')
+            .select()
+            .ilike('username', _currentWorker)
+            .order('audit_year', ascending: false)
+            .order('audit_month', ascending: false);
+        _myAuditHistoryList = List<Map<String, dynamic>>.from(historyRes);
+      } catch (_) {}
+
+      // 3. Assigned Production Jobs (No Quotes)
       final allJobs = await _supabase
           .from('job_cards')
           .select()
           .order('id', ascending: false);
 
       final filtered = List<Map<String, dynamic>>.from(allJobs).where((j) {
+        final status = (j['status'] ?? '').toString().toUpperCase().trim();
+        if (status == 'QUOTATION' || status == 'QUOTE') return false;
+
         final assigned = (j['assigned_to'] ?? '').toString().trim().toUpperCase();
         final specs = (j['specs_detail'] ?? '').toString().toUpperCase();
 
@@ -121,6 +286,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _handleSignOut() async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0C2232),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Row(
+          children: [
+            Icon(Icons.logout_rounded, color: Color(0xFFEF4444), size: 22),
+            SizedBox(width: 8),
+            Text("Sign Out", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: const Text("Kya aap session close karke login screen par jana chahte hain?", style: TextStyle(color: Colors.white70, fontSize: 13)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel", style: TextStyle(color: Color(0xFF94A3B8))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Sign Out", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('logged_worker_username');
+        await prefs.remove('logged_operator_username');
+        await _supabase.auth.signOut().catchError((_) {});
+      } catch (_) {}
+
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const SignInScreen()),
+          (route) => false,
+        );
+      }
     }
   }
 
@@ -249,14 +459,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _showHistoryInspectionModal(Map<String, dynamic> job) {
+  void _showHistoryInspectionModal(Map<String, dynamic> job, Map<String, dynamic> comparison) {
     final jobNo = (job['job_no'] ?? '-').toString();
     final client = (job['client'] ?? '-').toString();
     final panelType = (job['panel_type'] ?? '').toString().replaceAll('[PANEL]', '').replaceAll(RegExp(r'\[ITEM:.*?\]'), '').trim();
-    final status = (job['status'] ?? 'COMPLETED').toString().toUpperCase();
     final targetDate = (job['target_date'] ?? '-').toString();
     final startDate = (job['start_date'] ?? '-').toString();
     final scope = _extractCleanScope((job['specs_detail'] ?? '').toString());
+    final timeAgoText = _calculateTimeAgo(targetDate != '-' ? targetDate : startDate);
+
+    final int diff = comparison['diff'] ?? 0;
+    final int curScore = comparison['curScore'] ?? 0;
+    final int prevScore = comparison['prevScore'] ?? 0;
+    final List<String> improved = List<String>.from(comparison['improved'] ?? []);
+    final List<String> dropped = List<String>.from(comparison['dropped'] ?? []);
 
     showModalBottomSheet(
       context: context,
@@ -280,7 +496,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text("$jobNo History Log", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 16, fontWeight: FontWeight.w900)),
+                      Text("$jobNo Audit Analysis", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 16, fontWeight: FontWeight.w900)),
                       Text(client, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
                     ],
                   ),
@@ -292,24 +508,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       border: Border.all(color: const Color(0xFF10B981)),
                     ),
                     child: Text(
-                      status,
-                      style: const TextStyle(color: Color(0xFF10B981), fontSize: 11, fontWeight: FontWeight.w900),
+                      "$curScore/100",
+                      style: const TextStyle(color: Color(0xFF10B981), fontSize: 12, fontWeight: FontWeight.w900),
                     ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.schedule_rounded, size: 14, color: Color(0xFFE88226)),
+                  const SizedBox(width: 5),
+                  Text(timeAgoText, style: const TextStyle(color: Color(0xFFE88226), fontSize: 11, fontWeight: FontWeight.bold)),
                 ],
               ),
               const SizedBox(height: 12),
               const Divider(color: Color(0xFF193B54)),
               const SizedBox(height: 8),
 
-              // Director Quality Review Card
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: const Color(0xFF0C2232),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFFE88226).withOpacity(0.5)),
+                  border: Border.all(
+                    color: diff > 0
+                        ? const Color(0xFF10B981).withOpacity(0.6)
+                        : (diff < 0 ? const Color(0xFFEF4444).withOpacity(0.6) : const Color(0xFF0284C7).withOpacity(0.6)),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -317,36 +544,68 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text("Director Quality Review", style: TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w900)),
-                        Row(
-                          children: List.generate(5, (i) => const Icon(Icons.star_rounded, color: Color(0xFFE88226), size: 16)),
+                        const Text("Difference from Previous Panel:", style: TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w900)),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: (diff > 0 ? const Color(0xFF10B981) : (diff < 0 ? const Color(0xFFEF4444) : Colors.grey)).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            diff > 0 ? "+$diff pts ▲" : (diff < 0 ? "$diff pts ▼" : "0 pts (Same)"),
+                            style: TextStyle(
+                              color: diff > 0 ? const Color(0xFF10B981) : (diff < 0 ? const Color(0xFFEF4444) : Colors.white70),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 6),
-                    Text("Standing: $_ratingTag", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 2),
-                    Text("\"$_ratingComment\"", style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11, fontStyle: FontStyle.italic)),
+                    Text(
+                      "Current: $curScore/100  |  Previous: $prevScore/100",
+                      style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    if (improved.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text("🟢 Points Gained In: ", style: TextStyle(color: Color(0xFF10B981), fontSize: 10.5, fontWeight: FontWeight.bold)),
+                            Expanded(
+                              child: Text(improved.join(', '), style: const TextStyle(color: Colors.white, fontSize: 10.5)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (dropped.isNotEmpty)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text("🔴 Points Deducted In: ", style: TextStyle(color: Color(0xFFEF4444), fontSize: 10.5, fontWeight: FontWeight.bold)),
+                          Expanded(
+                            child: Text(dropped.join(', '), style: const TextStyle(color: Colors.white, fontSize: 10.5)),
+                          ),
+                        ],
+                      ),
+                    if (improved.isEmpty && dropped.isEmpty)
+                      const Text(
+                        "Sabhi parameters pichhle panel ke barabar hain.",
+                        style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10.5, fontStyle: FontStyle.italic),
+                      ),
                   ],
                 ),
               ),
-
-              const SizedBox(height: 12),
-
-              // Milestones Completed Checklist
-              const Text("Milestones Completed:", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11.5, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              _buildMilestoneRow("1. Fabrication & Component Mounting", "Completed (Verified)", true),
-              _buildMilestoneRow("2. Power & Control Wiring Dressing", "Completed (Verified)", true),
-              _buildMilestoneRow("3. Ferrule Numbering & Drawing Check", "Completed (Verified)", true),
-              _buildMilestoneRow("4. HV & Logic Quality Control (QC)", "Passed (Factory Cleared)", true),
 
               const SizedBox(height: 12),
               _buildDetailInfoRow("Panel Type:", panelType),
               const SizedBox(height: 4),
               _buildDetailInfoRow("Production Started:", startDate),
               const SizedBox(height: 4),
-              _buildDetailInfoRow("Dispatch Date:", targetDate),
+              _buildDetailInfoRow("Delivered Date:", targetDate),
               const SizedBox(height: 8),
 
               if (scope.isNotEmpty) ...[
@@ -381,27 +640,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  static Widget _buildMilestoneRow(String title, String status, bool isDone) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          Icon(isDone ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded, color: isDone ? const Color(0xFF10B981) : Colors.grey, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w600)),
-          ),
-          Text(status, style: TextStyle(color: isDone ? const Color(0xFF10B981) : Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-
   static Widget _buildDetailInfoRow(String label, String value, {bool isAlert = false}) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(width: 120, child: Text(label, style: const TextStyle(color: Color(0xFF64748B), fontSize: 11.5))),
+        SizedBox(width: 130, child: Text(label, style: const TextStyle(color: Color(0xFF64748B), fontSize: 11.5))),
         Expanded(
           child: Text(
             value,
@@ -420,8 +663,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF07121A),
-
-      // Top AppBar with NextGen Logo and live 100-mark score pill
       appBar: AppBar(
         automaticallyImplyLeading: false,
         backgroundColor: const Color(0xFF0C2232),
@@ -458,34 +699,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               ),
             ),
-            // ⭐ 100-Mark Score Pill (Tap to view Scorecard tab)
+            // ⭐ 5-STAR HIGHLIGHT BADGE IN APPBAR
             GestureDetector(
               onTap: () => setState(() => _currentTabIndex = 1),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF10B981).withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(7),
-                  border: Border.all(color: const Color(0xFF10B981)),
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF1E293B), Color(0xFF0C2232)],
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFE88226), width: 1.2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFE88226).withOpacity(0.25),
+                      blurRadius: 6,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.verified_rounded, color: Color(0xFF10B981), size: 14),
-                    const SizedBox(width: 4),
-                    Text("$_score100/100", style: const TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w900)),
+                    const Icon(Icons.star_rounded, color: Color(0xFFE88226), size: 16),
+                    const SizedBox(width: 3),
+                    Text(
+                      _myRating > 0 ? _myRating.toStringAsFixed(1) : "0.0",
+                      style: const TextStyle(
+                        color: Color(0xFFE88226),
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 6),
+                      width: 1.2,
+                      height: 12,
+                      color: const Color(0xFF193B54),
+                    ),
+                    Text(
+                      "$_score100/100",
+                      style: const TextStyle(
+                        color: Color(0xFF10B981),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(width: 4),
-            IconButton(
-              icon: const Icon(Icons.refresh_rounded, color: Colors.white70, size: 21),
-              onPressed: _loadWorkerSession,
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
+            const SizedBox(width: 6),
           ],
         ),
       ),
@@ -495,10 +759,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           : IndexedStack(
               index: _currentTabIndex,
               children: [
-                _buildFloorJobsTab(),
-                _build100MarkScorecardTab(), // TAB 1: 100-Mark Audit Breakdown
-                _buildHistoryTab(),          // TAB 2: Dispatched & QC Passed Archive
-                _buildProfileTab(),          // TAB 3: Profile
+                _buildHomeTab(),
+                _build100MarkScorecardTab(),
+                _buildHistoryTab(),
+                _buildProfileTab(),
               ],
             ),
 
@@ -518,10 +782,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
           selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w900, fontSize: 11),
           unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 10.5),
           items: const [
-            BottomNavigationBarItem(icon: Icon(Icons.assignment_outlined), activeIcon: Icon(Icons.assignment_rounded), label: "Floor Jobs"),
-            BottomNavigationBarItem(icon: Icon(Icons.fact_check_outlined), activeIcon: Icon(Icons.fact_check_rounded, color: Color(0xFF10B981)), label: "My Score (100)"),
-            BottomNavigationBarItem(icon: Icon(Icons.history_toggle_off_rounded), activeIcon: Icon(Icons.history_rounded, color: Color(0xFF38BDF8)), label: "History"),
-            BottomNavigationBarItem(icon: Icon(Icons.person_outline_rounded), activeIcon: Icon(Icons.person_rounded), label: "Profile"),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.home_outlined),
+              activeIcon: Icon(Icons.home_rounded),
+              label: "Home",
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.fact_check_outlined),
+              activeIcon: Icon(Icons.fact_check_rounded, color: Color(0xFF10B981)),
+              label: "My Score (100)",
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.history_toggle_off_rounded),
+              activeIcon: Icon(Icons.history_rounded, color: Color(0xFF38BDF8)),
+              label: "History",
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.person_outline_rounded),
+              activeIcon: Icon(Icons.person_rounded),
+              label: "Profile",
+            ),
           ],
         ),
       ),
@@ -529,9 +809,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // =========================================================================
-  // TAB 0: FLOOR JOBS WITH STRIKETHROUGH ON REASSIGNED CARDS
+  // TAB 0: HOME (ACTIVE FLOOR PRODUCTION - NO QUOTES)
   // =========================================================================
-  Widget _buildFloorJobsTab() {
+  Widget _buildHomeTab() {
     final activeOnlyJobs = _myAllJobs.where((j) => (j['assigned_to'] ?? '').toString().toUpperCase() == _currentWorker).toList();
     final assignedCount = activeOnlyJobs.length;
     final inProgressCount = activeOnlyJobs.where((j) {
@@ -577,7 +857,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
         children: [
-          // 1. TOP PROFILE STANDING BANNER (PHOTO MATCH)
           GestureDetector(
             onTap: () => setState(() => _currentTabIndex = 3),
             child: Container(
@@ -626,7 +905,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          "\"★ ${_myRating.toStringAsFixed(1)} • Score: $_score100/100\"",
+                          "★ ${_myRating.toStringAsFixed(1)} • Score: $_score100/100",
                           style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11, fontStyle: FontStyle.italic),
                         ),
                       ],
@@ -637,47 +916,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
-
           const SizedBox(height: 12),
 
-          // 2. THE 3 METRIC CARDS ROW (PHOTO MATCH)
           Row(
             children: [
               Expanded(
-                child: _buildMetricTile(
-                  "Assigned",
-                  "$assignedCount",
-                  "Total Panels",
-                  const Color(0xFF38BDF8),
-                  Icons.assignment_outlined,
-                ),
+                child: _buildMetricTile("Assigned", "$assignedCount", "Total Panels", const Color(0xFF38BDF8), Icons.assignment_outlined),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: _buildMetricTile(
-                  "In-Progress",
-                  "$inProgressCount",
-                  "Floor Active",
-                  const Color(0xFFE88226),
-                  Icons.timelapse_rounded,
-                ),
+                child: _buildMetricTile("In-Progress", "$inProgressCount", "Floor Active", const Color(0xFFE88226), Icons.timelapse_rounded),
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: _buildMetricTile(
-                  "Completed",
-                  "$completedCount",
-                  "QC Pass",
-                  const Color(0xFF10B981),
-                  Icons.check_circle_outline_rounded,
-                ),
+                child: _buildMetricTile("Completed", "$completedCount", "QC Pass", const Color(0xFF10B981), Icons.check_circle_outline_rounded),
               ),
             ],
           ),
-
           const SizedBox(height: 12),
 
-          // 3. SEARCH BAR
           Container(
             height: 40,
             padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -708,16 +965,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
-
           const SizedBox(height: 10),
 
-          // 4. FILTER CHIPS
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             physics: const BouncingScrollPhysics(),
             child: Row(
               children: [
-                _buildFilterChip("ALL", "All Jobs ($assignedCount)"),
+                _buildFilterChip("ALL", "All Production ($assignedCount)"),
                 const SizedBox(width: 6),
                 _buildFilterChip("RUNNING", "Running ($runningCount)"),
                 const SizedBox(width: 6),
@@ -727,24 +982,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
           ),
-
           const SizedBox(height: 12),
 
-          // 5. JOB CARDS LIST
           if (filtered.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 60),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 60),
               child: Center(
-                child: Column(
-                  children: [
-                    const Icon(Icons.inventory_2_outlined, color: Color(0xFF334155), size: 44),
-                    const SizedBox(height: 8),
-                    Text(
-                      _searchQuery.isNotEmpty ? "No panel found for '$_searchQuery'" : "No active jobs assigned on floor yet.",
-                      style: const TextStyle(color: Color(0xFF64748B), fontSize: 12.5),
-                    ),
-                  ],
-                ),
+                child: Text("No active production jobs assigned on floor yet.", style: TextStyle(color: Color(0xFF64748B), fontSize: 12.5)),
               ),
             )
           else
@@ -759,12 +1003,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               final specsStr = (job['specs_detail'] ?? '').toString();
               final assignedWorker = (job['assigned_to'] ?? '').toString().toUpperCase();
 
-              // Check if this card was reassigned away from this worker
               final bool isReassignedAway = (assignedWorker != _currentWorker);
-
-              // Extract who it was reassigned to and the specific reason
               String transferTo = assignedWorker;
-              String transferReason = "Reassigned to another technician by Director";
+              String transferReason = "Reassigned by Director";
               final transferMatch = RegExp(r'\[TRANSFER:FROM:.*?\|TO:(.*?)\|REASON:(.*?)\|').firstMatch(specsStr);
               if (transferMatch != null) {
                 transferTo = transferMatch.group(1) ?? assignedWorker;
@@ -772,13 +1013,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               }
 
               final bool isDone = (status == 'COMPLETED' || status == 'DISPATCHED');
-              final Color statusClr = isDone
-                  ? const Color(0xFF10B981)
-                  : (status == 'TESTING' ? const Color(0xFFEA580C) : const Color(0xFF0284C7));
+              final Color statusClr = isDone ? const Color(0xFF10B981) : (status == 'TESTING' ? const Color(0xFFEA580C) : const Color(0xFF0284C7));
 
               return Stack(
                 children: [
-                  // Base Panel Card
                   Opacity(
                     opacity: isReassignedAway ? 0.40 : 1.0,
                     child: GestureDetector(
@@ -808,52 +1046,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                         borderRadius: BorderRadius.circular(4),
                                         border: Border.all(color: const Color(0xFF38BDF8).withOpacity(0.5)),
                                       ),
-                                      child: Text(
-                                        jobNo,
-                                        style: TextStyle(
-                                          color: isReassignedAway ? Colors.grey : const Color(0xFF38BDF8),
-                                          fontSize: 10.5,
-                                          fontWeight: FontWeight.w900,
-                                          decoration: isReassignedAway ? TextDecoration.lineThrough : null,
-                                          decorationColor: Colors.red,
-                                          decorationThickness: 2.2,
-                                        ),
-                                      ),
+                                      child: Text(jobNo, style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 10.5, fontWeight: FontWeight.w900)),
                                     ),
                                     const SizedBox(width: 8),
-                                    Text(
-                                      client,
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w800,
-                                        decoration: isReassignedAway ? TextDecoration.lineThrough : null,
-                                        decorationColor: Colors.red,
-                                        decorationThickness: 2.2,
-                                      ),
-                                    ),
+                                    Text(client, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800)),
                                   ],
                                 ),
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: statusClr.withOpacity(0.18),
-                                    borderRadius: BorderRadius.circular(4),
-                                    border: Border.all(color: statusClr),
-                                  ),
-                                  child: Text(
-                                    status,
-                                    style: TextStyle(color: statusClr, fontSize: 9.5, fontWeight: FontWeight.w900),
-                                  ),
+                                  decoration: BoxDecoration(color: statusClr.withOpacity(0.18), borderRadius: BorderRadius.circular(4), border: Border.all(color: statusClr)),
+                                  child: Text(status, style: TextStyle(color: statusClr, fontSize: 9.5, fontWeight: FontWeight.w900)),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 6),
                             if (panelType.isNotEmpty)
-                              Text(
-                                panelType,
-                                style: const TextStyle(color: Colors.white70, fontSize: 11.5, fontWeight: FontWeight.w600),
-                              ),
+                              Text(panelType, style: const TextStyle(color: Colors.white70, fontSize: 11.5, fontWeight: FontWeight.w600)),
                             const SizedBox(height: 8),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -882,16 +1090,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   children: [
                                     const Icon(Icons.flag_rounded, size: 12, color: Color(0xFFE88226)),
                                     const SizedBox(width: 4),
-                                    Text(
-                                      "Target: $targetDateStr",
-                                      style: const TextStyle(color: Color(0xFFE88226), fontSize: 10.5, fontWeight: FontWeight.w700),
-                                    ),
+                                    Text("Target: $targetDateStr", style: const TextStyle(color: Color(0xFFE88226), fontSize: 10.5, fontWeight: FontWeight.w700)),
                                   ],
                                 ),
-                                const Text(
-                                  "Tap for scope ➔",
-                                  style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10.5, fontWeight: FontWeight.bold),
-                                ),
+                                const Text("Tap for scope ➔", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10.5, fontWeight: FontWeight.bold)),
                               ],
                             ),
                           ],
@@ -899,15 +1101,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                   ),
-
-                  // ❌ STRIKETHROUGH CROSS-LINE OVERLAY & REASSIGNMENT REASON BANNER
                   if (isReassignedAway) ...[
                     Positioned.fill(
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 12),
-                        child: CustomPaint(
-                          painter: CrossLinePainter(),
-                        ),
+                        child: CustomPaint(painter: CrossLinePainter()),
                       ),
                     ),
                     Positioned(
@@ -920,34 +1118,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           color: const Color(0xFF450A0A).withOpacity(0.96),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(color: const Color(0xFFEF4444), width: 1.3),
-                          boxShadow: [
-                            BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 6),
-                          ],
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                const Icon(Icons.cancel_rounded, color: Color(0xFFEF4444), size: 15),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    "REASSIGNED TO: $transferTo",
-                                    style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 11, fontWeight: FontWeight.w900),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              "Reason: \"$transferReason\"",
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Colors.white, fontSize: 10, fontStyle: FontStyle.italic),
-                            ),
-                          ],
-                        ),
+                        child: Text("REASSIGNED TO: $transferTo • $transferReason", style: const TextStyle(color: Colors.white, fontSize: 10)),
                       ),
                     ),
                   ],
@@ -960,13 +1132,265 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // =========================================================================
-  // TAB 1: 100-MARK FACTORY SCORECARD & BREAKDOWN (WORKER'S OWN SCORE)
+  // TAB 1: 100-MARK FACTORY SCORECARD (MONTHLY / YEARLY ARCHIVE & 7-POINT FARAK)
   // =========================================================================
   Widget _build100MarkScorecardTab() {
+    final now = DateTime.now();
+
+    int activeScore = 0;
+    double activeRating = 0.0;
+    String activeTag = "NOT EVALUATED";
+    String activeComment = "";
+
+    int wM = 0, dM = 0, aM = 0, fM = 0, pM = 0, mM = 0, sM = 0;
+
+    int prevScore = 0;
+    Map<String, int> prevParams = {'Wiring': 0, 'Dressing': 0, 'Attendance': 0, 'Ferrule': 0, 'PLC': 0, 'Mounting': 0, 'Safety': 0};
+    bool hasPreviousAudit = false;
+
+    if (_isScoreYearlyMode) {
+      final yearAudits = _myAuditHistoryList.where((a) => (a['audit_year'] as num?)?.toInt() == _scoreSelYear).toList();
+      if (yearAudits.isNotEmpty) {
+        final total = yearAudits.map((a) => (a['score_100'] as num?)?.toInt() ?? 0).reduce((a, b) => a + b);
+        activeScore = (total / yearAudits.length).round();
+        activeRating = (activeScore / 20.0).clamp(1.0, 5.0);
+        activeTag = activeScore >= 90 ? "MASTER BUILDER" : (activeScore >= 80 ? "FACTORY STANDARD" : "AVERAGE FACTORY OUTPUT");
+        activeComment = "Yearly cumulative average across ${yearAudits.length} audited month(s).";
+
+        for (var a in yearAudits) {
+          final m = _extractBreakdownMap((a['qc_breakdown'] ?? '').toString());
+          wM += m['Wiring'] ?? 0;
+          dM += m['Dressing'] ?? 0;
+          aM += m['Attendance'] ?? 0;
+          fM += m['Ferrule'] ?? 0;
+          pM += m['PLC'] ?? 0;
+          mM += m['Mounting'] ?? 0;
+          sM += m['Safety'] ?? 0;
+        }
+        wM = (wM / yearAudits.length).round();
+        dM = (dM / yearAudits.length).round();
+        aM = (aM / yearAudits.length).round();
+        fM = (fM / yearAudits.length).round();
+        pM = (pM / yearAudits.length).round();
+        mM = (mM / yearAudits.length).round();
+        sM = (sM / yearAudits.length).round();
+      } else {
+        activeScore = 0;
+        activeRating = 0.0;
+        activeTag = "NOT EVALUATED (0)";
+        activeComment = "No audits recorded for year $_scoreSelYear.";
+      }
+    } else {
+      final monthRecord = _myAuditHistoryList.firstWhere(
+        (a) =>
+            (a['audit_month'] as num?)?.toInt() == _scoreSelMonth &&
+            (a['audit_year'] as num?)?.toInt() == _scoreSelYear,
+        orElse: () => {},
+      );
+
+      if (monthRecord.isNotEmpty) {
+        activeScore = (monthRecord['score_100'] as num?)?.toInt() ?? 0;
+        activeRating = (monthRecord['rating'] as num?)?.toDouble() ?? (activeScore / 20.0);
+        activeTag = (monthRecord['rating_tag'] ?? 'FACTORY STANDARD').toString();
+        activeComment = (monthRecord['rating_comment'] ?? 'Quality review recorded.').toString();
+
+        final m = _extractBreakdownMap((monthRecord['qc_breakdown'] ?? '').toString());
+        wM = m['Wiring'] ?? 0;
+        dM = m['Dressing'] ?? 0;
+        aM = m['Attendance'] ?? 0;
+        fM = m['Ferrule'] ?? 0;
+        pM = m['PLC'] ?? 0;
+        mM = m['Mounting'] ?? 0;
+        sM = m['Safety'] ?? 0;
+      } else {
+        final bool isCurrentMonth = (_scoreSelMonth == now.month && _scoreSelYear == now.year);
+        if (isCurrentMonth && _score100 > 0) {
+          activeScore = _score100;
+          activeRating = _myRating;
+          activeTag = _ratingTag;
+          activeComment = _ratingComment;
+          wM = _wiringMarks;
+          dM = _dressingMarks;
+          aM = _attendanceMarks;
+          fM = _ferruleMarks;
+          pM = _plcSignalMarks;
+          mM = _mountingMarks;
+          sM = _safetyQcMarks;
+        } else {
+          activeScore = 0;
+          activeRating = 0.0;
+          activeTag = "NOT EVALUATED (0/100)";
+          activeComment = "No inspection audit recorded for ${_monthName(_scoreSelMonth)} $_scoreSelYear.";
+        }
+      }
+
+      int prevM = _scoreSelMonth == 1 ? 12 : _scoreSelMonth - 1;
+      int prevY = _scoreSelMonth == 1 ? _scoreSelYear - 1 : _scoreSelYear;
+
+      final prevRecord = _myAuditHistoryList.firstWhere(
+        (a) =>
+            (a['audit_month'] as num?)?.toInt() == prevM &&
+            (a['audit_year'] as num?)?.toInt() == prevY,
+        orElse: () => {},
+      );
+
+      if (prevRecord.isNotEmpty) {
+        hasPreviousAudit = true;
+        prevScore = (prevRecord['score_100'] as num?)?.toInt() ?? 0;
+        prevParams = _extractBreakdownMap((prevRecord['qc_breakdown'] ?? '').toString());
+      }
+    }
+
+    final int scoreDiff = activeScore - prevScore;
+    final List<String> gains = [];
+    final List<String> losses = [];
+
+    if (hasPreviousAudit && !_isScoreYearlyMode && activeScore > 0) {
+      void checkFarak(String title, int current, int prev) {
+        int diff = current - prev;
+        if (diff > 0) {
+          gains.add("$title (+$diff)");
+        } else if (diff < 0) {
+          losses.add("$title ($diff)");
+        }
+      }
+
+      checkFarak('Wiring', wM, prevParams['Wiring'] ?? 0);
+      checkFarak('Dressing', dM, prevParams['Dressing'] ?? 0);
+      checkFarak('Attendance', aM, prevParams['Attendance'] ?? 0);
+      checkFarak('Ferrule', fM, prevParams['Ferrule'] ?? 0);
+      checkFarak('PLC', pM, prevParams['PLC'] ?? 0);
+      checkFarak('Mounting', mM, prevParams['Mounting'] ?? 0);
+      checkFarak('Safety', sM, prevParams['Safety'] ?? 0);
+    }
+
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        // Scorecard Header Card
+        // 1. DATE NAVIGATOR
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0C2232),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF193B54)),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _isScoreYearlyMode = false),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        decoration: BoxDecoration(
+                          color: !_isScoreYearlyMode ? const Color(0xFF0284C7) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          "Monthly Audit",
+                          style: TextStyle(
+                            color: !_isScoreYearlyMode ? Colors.white : const Color(0xFF94A3B8),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _isScoreYearlyMode = true),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _isScoreYearlyMode ? const Color(0xFF0284C7) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          "Yearly Overview",
+                          style: TextStyle(
+                            color: _isScoreYearlyMode ? Colors.white : const Color(0xFF94A3B8),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11.5,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 15, color: Color(0xFF38BDF8)),
+                    onPressed: () {
+                      setState(() {
+                        if (_isScoreYearlyMode) {
+                          _scoreSelYear--;
+                        } else {
+                          if (_scoreSelMonth == 1) {
+                            _scoreSelMonth = 12;
+                            _scoreSelYear--;
+                          } else {
+                            _scoreSelMonth--;
+                          }
+                        }
+                      });
+                    },
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF071824),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.5)),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(_isScoreYearlyMode ? Icons.calendar_today_rounded : Icons.calendar_month_rounded, size: 14, color: const Color(0xFFE88226)),
+                        const SizedBox(width: 6),
+                        Text(
+                          _isScoreYearlyMode ? "Full Year $_scoreSelYear" : "${_monthName(_scoreSelMonth)} $_scoreSelYear",
+                          style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w900),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.arrow_forward_ios_rounded, size: 15, color: Color(0xFF38BDF8)),
+                    onPressed: () {
+                      setState(() {
+                        if (_isScoreYearlyMode) {
+                          _scoreSelYear++;
+                        } else {
+                          if (_scoreSelMonth == 12) {
+                            _scoreSelMonth = 1;
+                            _scoreSelYear++;
+                          } else {
+                            _scoreSelMonth++;
+                          }
+                        }
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // 2. MAIN AUDIT SCORECARD BANNER
         Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
@@ -979,7 +1403,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text("Factory Quality Audit", style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900)),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Factory Quality Audit", style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 2),
+                      Text(
+                        _isScoreYearlyMode ? "Year $_scoreSelYear Archive" : "${_monthName(_scoreSelMonth)} $_scoreSelYear Audit",
+                        style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
@@ -987,16 +1421,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: const Color(0xFF10B981)),
                     ),
-                    child: Text("$_score100 / 100", style: const TextStyle(color: Color(0xFF10B981), fontSize: 16, fontWeight: FontWeight.w900)),
+                    child: Text("$activeScore / 100", style: const TextStyle(color: Color(0xFF10B981), fontSize: 16, fontWeight: FontWeight.w900)),
                   ),
                 ],
               ),
               const SizedBox(height: 10),
               Row(
                 children: [
-                  Text("Standing Grade: $_ratingTag", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11.5, fontWeight: FontWeight.bold)),
+                  Text("Standing Grade: $activeTag", style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11.5, fontWeight: FontWeight.bold)),
                   const Spacer(),
-                  Text("${_myRating.toStringAsFixed(1)} ★", style: const TextStyle(color: Color(0xFFE88226), fontSize: 13, fontWeight: FontWeight.w900)),
+                  Text("${activeRating.toStringAsFixed(1)} ★", style: const TextStyle(color: Color(0xFFE88226), fontSize: 13, fontWeight: FontWeight.w900)),
                 ],
               ),
               const SizedBox(height: 10),
@@ -1004,28 +1438,103 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(color: const Color(0xFF071420), borderRadius: BorderRadius.circular(8)),
-                child: Text("\"$_ratingComment\"", style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11.5, fontStyle: FontStyle.italic)),
+                child: Text("\"$activeComment\"", style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11.5, fontStyle: FontStyle.italic)),
               ),
             ],
           ),
         ),
 
+        // 3. 🔍 7-POINT FARAK CARD
+        if (hasPreviousAudit && !_isScoreYearlyMode && activeScore > 0) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0C2232),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: scoreDiff > 0
+                    ? const Color(0xFF10B981).withOpacity(0.6)
+                    : (scoreDiff < 0 ? const Color(0xFFEF4444).withOpacity(0.6) : const Color(0xFF0284C7).withOpacity(0.6)),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "7-Parameter Farak vs ${_monthName(_scoreSelMonth == 1 ? 12 : _scoreSelMonth - 1)}:",
+                      style: const TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w900),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: (scoreDiff > 0 ? const Color(0xFF10B981) : (scoreDiff < 0 ? const Color(0xFFEF4444) : Colors.grey)).withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        scoreDiff > 0 ? "+$scoreDiff pts ▲" : (scoreDiff < 0 ? "$scoreDiff pts ▼" : "0 pts (Same)"),
+                        style: TextStyle(
+                          color: scoreDiff > 0 ? const Color(0xFF10B981) : (scoreDiff < 0 ? const Color(0xFFEF4444) : Colors.white70),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (gains.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("🟢 Points Gained: ", style: TextStyle(color: Color(0xFF10B981), fontSize: 10.5, fontWeight: FontWeight.bold)),
+                        Expanded(child: Text(gains.join(', '), style: const TextStyle(color: Colors.white, fontSize: 10.5))),
+                      ],
+                    ),
+                  ),
+                if (losses.isNotEmpty)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("🔴 Points Deducted: ", style: TextStyle(color: Color(0xFFEF4444), fontSize: 10.5, fontWeight: FontWeight.bold)),
+                      Expanded(child: Text(losses.join(', '), style: const TextStyle(color: Colors.white, fontSize: 10.5))),
+                    ],
+                  ),
+                if (gains.isEmpty && losses.isEmpty)
+                  const Text("Sabhi 7 parameters pichhle mahine ke barabar hain.", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10.5, fontStyle: FontStyle.italic)),
+              ],
+            ),
+          ),
+        ],
+
         const SizedBox(height: 16),
-        const Text("Inspection Parameters Breakdown (100 Marks):", style: TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w900)),
+        Text(
+          _isScoreYearlyMode
+              ? "Yearly Average Parameters (100 Marks):"
+              : "${_monthName(_scoreSelMonth)} Parameters Breakdown (100 Marks):",
+          style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w900),
+        ),
         const SizedBox(height: 10),
 
-        _buildParameterCard("1. Wiring & Crimping Quality", "Lug tightness, torque, wire gauge rating", _wiringMarks, 25),
-        _buildParameterCard("2. Wiring Dressing & Aesthetics", "Duct trunking, door loop wrap, tie spacing", _dressingMarks, 20),
-        _buildParameterCard("3. Ferrule & Tagging Match", "Schematic DWG cross-ferruling, TB numbering", _ferruleMarks, 15),
-        _buildParameterCard("4. PLC & Signal Noise Isolation", "24VDC/Analog AC separation, shield wire earthing", _plcSignalMarks, 15),
-        _buildParameterCard("5. Component Mounting Alignment", "DIN rail alignment, heavy item sturdiness", _mountingMarks, 15),
-        _buildParameterCard("6. Safety & QC Factory Check", "Body earthing bonding, Megger insulation, HV", _safetyQcMarks, 10),
+        // 4. 7 PARAMETERS PROGRESS BARS
+        _buildParameterCard("1. Wiring & Crimping Quality", "Lug tightness, torque, wire gauge rating", wM, 20),
+        _buildParameterCard("2. Wiring Dressing & Aesthetics", "Duct trunking, door loop wrap, tie spacing", dM, 20),
+        _buildParameterCard("3. Attendance & Floor Punctuality", "Shift timing, daily punctuality, shop floor presence", aM, 20),
+        _buildParameterCard("4. Ferrule & Tagging Match", "Schematic DWG cross-ferruling, TB numbering", fM, 10),
+        _buildParameterCard("5. PLC & Signal Noise Isolation", "24VDC/Analog AC separation, shield wire earthing", pM, 10),
+        _buildParameterCard("6. Component Mounting Alignment", "DIN rail alignment, heavy item sturdiness", mM, 10),
+        _buildParameterCard("7. Safety & QC Factory Check", "Body earthing bonding, Megger insulation, HV", sM, 10),
       ],
     );
   }
 
   Widget _buildParameterCard(String title, String desc, int marks, int max) {
-    final double ratio = (marks / max).clamp(0.0, 1.0);
+    final double ratio = max > 0 ? (marks / max).clamp(0.0, 1.0) : 0.0;
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
@@ -1062,7 +1571,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // =========================================================================
-  // TAB 2: HISTORY (COMPLETED & INSPECTED PANELS ARCHIVE)
+  // TAB 2: HISTORY (DELIVERED PANELS)
   // =========================================================================
   Widget _buildHistoryTab() {
     final completedPanels = _myAllJobs.where((j) {
@@ -1071,11 +1580,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }).toList();
 
     final filteredHistory = completedPanels.where((job) {
-      if (_historySearchQuery.isEmpty) return true;
       final jNo = (job['job_no'] ?? '').toString().toLowerCase();
       final cName = (job['client'] ?? '').toString().toLowerCase();
       final pDesc = (job['panel_type'] ?? '').toString().toLowerCase();
-      return jNo.contains(_historySearchQuery) || cName.contains(_historySearchQuery) || pDesc.contains(_historySearchQuery);
+
+      bool matchesSearch = _historySearchQuery.isEmpty ||
+          jNo.contains(_historySearchQuery) ||
+          cName.contains(_historySearchQuery) ||
+          pDesc.contains(_historySearchQuery);
+
+      final dateStr = (job['target_date'] ?? job['start_date'] ?? '').toString().toLowerCase();
+      final specsStr = (job['specs_detail'] ?? '').toString();
+
+      bool matchesPeriod = dateStr.contains(_historySelYear.toString());
+      if (!_isHistoryYearlyMode) {
+        final monthStr = _monthName(_historySelMonth).toLowerCase();
+        if (!dateStr.contains(monthStr) && !specsStr.contains('PERIOD:$_historySelMonth-$_historySelYear')) {
+          matchesPeriod = false;
+        }
+      }
+
+      return matchesSearch && matchesPeriod;
     }).toList();
 
     return RefreshIndicator(
@@ -1086,7 +1611,128 @@ class _DashboardScreenState extends State<DashboardScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 30),
         children: [
-          // 1. TOP MONTHLY PERFORMANCE SCORECARD
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0C2232),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF193B54)),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _isHistoryYearlyMode = false),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          decoration: BoxDecoration(
+                            color: !_isHistoryYearlyMode ? const Color(0xFF0284C7) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            "Monthly Delivered",
+                            style: TextStyle(
+                              color: !_isHistoryYearlyMode ? Colors.white : const Color(0xFF94A3B8),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _isHistoryYearlyMode = true),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          decoration: BoxDecoration(
+                            color: _isHistoryYearlyMode ? const Color(0xFF0284C7) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            "Yearly Archive",
+                            style: TextStyle(
+                              color: _isHistoryYearlyMode ? Colors.white : const Color(0xFF94A3B8),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 15, color: Color(0xFF38BDF8)),
+                      onPressed: () {
+                        setState(() {
+                          if (_isHistoryYearlyMode) {
+                            _historySelYear--;
+                          } else {
+                            if (_historySelMonth == 1) {
+                              _historySelMonth = 12;
+                              _historySelYear--;
+                            } else {
+                              _historySelMonth--;
+                            }
+                          }
+                        });
+                      },
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF071824),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFF0284C7).withOpacity(0.5)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(_isHistoryYearlyMode ? Icons.calendar_today_rounded : Icons.calendar_month_rounded, size: 14, color: const Color(0xFFE88226)),
+                          const SizedBox(width: 6),
+                          Text(
+                            _isHistoryYearlyMode ? "Full Year $_historySelYear" : "${_monthName(_historySelMonth)} $_historySelYear",
+                            style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w900),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.arrow_forward_ios_rounded, size: 15, color: Color(0xFF38BDF8)),
+                      onPressed: () {
+                        setState(() {
+                          if (_isHistoryYearlyMode) {
+                            _historySelYear++;
+                          } else {
+                            if (_historySelMonth == 12) {
+                              _historySelMonth = 1;
+                              _historySelYear++;
+                            } else {
+                              _historySelMonth++;
+                            }
+                          }
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -1099,66 +1745,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 colors: [Color(0xFF0F2638), Color(0xFF081824)],
               ),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text("Factory Scorecard", style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w900)),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF10B981).withOpacity(0.18),
-                        borderRadius: BorderRadius.circular(5),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("${filteredHistory.length}", style: const TextStyle(color: Color(0xFF10B981), fontSize: 20, fontWeight: FontWeight.w900)),
+                      Text(
+                        _isHistoryYearlyMode ? "Panels Built in $_historySelYear" : "Built in ${_monthName(_historySelMonth)}",
+                        style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600),
                       ),
-                      child: const Text("Verified Floor Logs", style: TextStyle(color: Color(0xFF10B981), fontSize: 9.5, fontWeight: FontWeight.bold)),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text("${completedPanels.length}", style: const TextStyle(color: Color(0xFF10B981), fontSize: 20, fontWeight: FontWeight.w900)),
-                          const Text("Panels Built", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-                    Container(width: 1, height: 28, color: const Color(0xFF193B54)),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const [
-                          Text("100%", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 20, fontWeight: FontWeight.w900)),
-                          Text("On-Time Rate", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-                    Container(width: 1, height: 28, color: const Color(0xFF193B54)),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text("$_score100/100", style: const TextStyle(color: Color(0xFFE88226), fontSize: 17, fontWeight: FontWeight.w900)),
-                          const Text("Average Quality", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600)),
-                        ],
-                      ),
-                    ),
-                  ],
+                Container(width: 1, height: 28, color: const Color(0xFF193B54)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("$_score100/100", style: const TextStyle(color: Color(0xFFE88226), fontSize: 18, fontWeight: FontWeight.w900)),
+                      const Text("Active Rating", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 10, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-
           const SizedBox(height: 12),
 
-          // 2. SEARCH ARCHIVE BAR
           Container(
             height: 38,
             padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1182,30 +1798,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         },
                       )
                     : null,
-                hintText: "Search dispatched panels by Job #, Client...",
+                hintText: "Search panels by Job #, Client...",
                 hintStyle: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
                 border: InputBorder.none,
                 contentPadding: const EdgeInsets.symmetric(vertical: 9),
               ),
             ),
           ),
-
           const SizedBox(height: 12),
 
-          // 3. ARCHIVED / DISPATCHED PANELS LIST
           if (filteredHistory.isEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 60),
+              padding: const EdgeInsets.symmetric(vertical: 50),
               child: Center(
-                child: Column(
-                  children: [
-                    const Icon(Icons.history_toggle_off_rounded, color: Color(0xFF334155), size: 44),
-                    const SizedBox(height: 8),
-                    Text(
-                      _historySearchQuery.isNotEmpty ? "No past panel matches '$_historySearchQuery'" : "No completed panels in archive yet.",
-                      style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
-                    ),
-                  ],
+                child: Text(
+                  "No panels recorded for ${_isHistoryYearlyMode ? '$_historySelYear' : '${_monthName(_historySelMonth)} $_historySelYear'}",
+                  style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
                 ),
               ),
             )
@@ -1215,10 +1823,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
               final client = (job['client'] ?? '-').toString();
               final panel = (job['panel_type'] ?? '').toString().replaceAll('[PANEL]', '').replaceAll(RegExp(r'\[ITEM:.*?\]'), '').trim();
               final targetDate = (job['target_date'] ?? '-').toString();
+              final startDate = (job['start_date'] ?? '-').toString();
               final status = (job['status'] ?? 'COMPLETED').toString().toUpperCase();
+              final timeAgo = _calculateTimeAgo(targetDate != '-' ? targetDate : startDate);
+
+              final comparison = _compareScoreWithPrevious(job, completedPanels);
+              final int diff = comparison['diff'] ?? 0;
+              final int curScore = comparison['curScore'] ?? 0;
+              final String summary = comparison['summary'] ?? '';
 
               return GestureDetector(
-                onTap: () => _showHistoryInspectionModal(job),
+                onTap: () => _showHistoryInspectionModal(job, comparison),
                 child: Container(
                   margin: const EdgeInsets.only(bottom: 10),
                   padding: const EdgeInsets.all(12),
@@ -1259,25 +1874,83 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Text(panel, style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11.5, fontWeight: FontWeight.w600)),
                       const SizedBox(height: 8),
 
-                      // Director Inspection Tag & Stars
                       Row(
                         children: [
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(color: const Color(0xFFE88226).withOpacity(0.18), borderRadius: BorderRadius.circular(4)),
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE88226).withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(5),
+                              border: Border.all(color: const Color(0xFFE88226).withOpacity(0.5)),
+                            ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(Icons.star_rounded, color: Color(0xFFE88226), size: 12),
-                                const SizedBox(width: 3),
-                                Text("${_myRating.toStringAsFixed(1)}", style: const TextStyle(color: Color(0xFFE88226), fontSize: 10, fontWeight: FontWeight.bold)),
+                                const Icon(Icons.history_rounded, size: 12, color: Color(0xFFE88226)),
+                                const SizedBox(width: 4),
+                                Text(timeAgo, style: const TextStyle(color: Color(0xFFE88226), fontSize: 10, fontWeight: FontWeight.w900)),
                               ],
                             ),
                           ),
-                          const SizedBox(width: 6),
-                          Text("• $_ratingTag", style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10.5, fontWeight: FontWeight.w600)),
+                          const SizedBox(width: 8),
+
+                          if (curScore > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: (diff > 0 ? const Color(0xFF10B981) : (diff < 0 ? const Color(0xFFEF4444) : Colors.grey)).withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(5),
+                                border: Border.all(
+                                  color: (diff > 0 ? const Color(0xFF10B981) : (diff < 0 ? const Color(0xFFEF4444) : Colors.grey)).withOpacity(0.6),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    diff > 0 ? "+$diff pts ▲" : (diff < 0 ? "$diff pts ▼" : "0 pts (Same)"),
+                                    style: TextStyle(
+                                      color: diff > 0 ? const Color(0xFF10B981) : (diff < 0 ? const Color(0xFFEF4444) : Colors.white70),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                         ],
                       ),
+
+                      if (summary.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF071420),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                diff > 0 ? Icons.trending_up_rounded : (diff < 0 ? Icons.trending_down_rounded : Icons.info_outline_rounded),
+                                size: 13,
+                                color: diff > 0 ? const Color(0xFF10B981) : (diff < 0 ? const Color(0xFFEF4444) : const Color(0xFF38BDF8)),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  summary,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 9.8, fontStyle: FontStyle.italic),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
 
                       const SizedBox(height: 8),
                       const Divider(color: Color(0xFF16344C), height: 1),
@@ -1286,8 +1959,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text("Dispatched: $targetDate", style: const TextStyle(color: Color(0xFF64748B), fontSize: 10)),
-                          const Text("View Inspection Details ➔", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.bold)),
+                          Text("Delivered: $targetDate", style: const TextStyle(color: Color(0xFF64748B), fontSize: 10)),
+                          const Text("View Full Analysis ➔", style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ],
@@ -1344,7 +2017,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text("Factory Quality Standing:", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11)),
-                  Text("$_score100/100 • $_ratingTag", style: const TextStyle(color: Color(0xFF10B981), fontSize: 11.5, fontWeight: FontWeight.bold)),
+                  Text(
+                    "$_score100/100 • $_ratingTag",
+                    style: const TextStyle(color: Color(0xFF10B981), fontSize: 11.5, fontWeight: FontWeight.bold),
+                  ),
                 ],
               ),
             ],
@@ -1352,7 +2028,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         const SizedBox(height: 16),
         _buildProfileTile(Icons.verified_user_rounded, "System Role", "Panel Fabrication & Control Wiring Specialist"),
-        _buildProfileTile(Icons.factory_rounded, "Plant Location", "NextGen Controls - Bhiwandi Operations Floor"),
+        _buildProfileTile(Icons.factory_rounded, "Plant Location", "NextGen Controls - Rabale RTC 35 Operations Floor"),
         _buildProfileTile(Icons.workspace_premium_rounded, "Certified Grade", "$_ratingTag (${_myRating.toStringAsFixed(1)} ★)"),
         const SizedBox(height: 20),
         SizedBox(
@@ -1365,15 +2041,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             icon: const Icon(Icons.logout_rounded, color: Color(0xFFEF4444), size: 18),
             label: const Text("Sign Out / Switch Builder", style: TextStyle(color: Color(0xFFEF4444), fontWeight: FontWeight.bold)),
-            onPressed: () async {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.remove('logged_worker_username');
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Session closed."), backgroundColor: Colors.orange),
-                );
-              }
-            },
+            onPressed: _handleSignOut,
           ),
         ),
       ],
@@ -1383,23 +2051,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildProfileTile(IconData icon, String title, String val) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       decoration: BoxDecoration(
         color: const Color(0xFF0C2030),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFF193B54)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Icon(icon, color: const Color(0xFF38BDF8), size: 18),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: const TextStyle(color: Color(0xFF64748B), fontSize: 10)),
-              const SizedBox(height: 2),
-              Text(val, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(title, style: const TextStyle(color: Color(0xFF64748B), fontSize: 10)),
+                const SizedBox(height: 2),
+                Text(
+                  val,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.25,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1456,9 +2136,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-// ===========================================================================
-// 🎨 CUSTOM PAINTER: CARD STRIKETHROUGH / RED DIAGONAL CROSS LINES
-// ===========================================================================
 class CrossLinePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -1467,9 +2144,7 @@ class CrossLinePainter extends CustomPainter {
       ..strokeWidth = 2.0
       ..style = PaintingStyle.stroke;
 
-    // Diagonal strikethrough from top-left to bottom-right
     canvas.drawLine(const Offset(4, 4), Offset(size.width - 4, size.height - 4), paint);
-    // Diagonal strikethrough from bottom-left to top-right
     canvas.drawLine(Offset(4, size.height - 4), Offset(size.width - 4, 4), paint);
   }
 
