@@ -1976,7 +1976,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // =========================================================================
   // TAB 3: WORKER PROFILE
   // =========================================================================
-  Widget _buildProfileTab() {
+Widget _buildProfileTab() {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -2013,13 +2013,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(height: 12),
               const Divider(color: Color(0xFF193B54)),
               const SizedBox(height: 8),
+
+              // 🔥 OVERFLOW FIXED: Row ko wrap karke text ko Flexible aur ellipsis diya gaya hai
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const Text("Factory Quality Standing:", style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11)),
-                  Text(
-                    "$_score100/100 • $_ratingTag",
-                    style: const TextStyle(color: Color(0xFF10B981), fontSize: 11.5, fontWeight: FontWeight.bold),
+                  const Text(
+                    "Factory Quality Standing: ",
+                    style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                  ),
+                  Expanded(
+                    child: Text(
+                      "$_score100/100 • $_ratingTag",
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(
+                        color: Color(0xFF10B981),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 ],
               ),
